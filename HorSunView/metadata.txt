@@ -1,0 +1,9 @@
+[general]
+name=HorSunView
+version=1.44
+qgisMinimumVersion=3.10
+category=Raster
+icon=icons/icon_24.png
+author=Kryophil (mit Unterstützung von ChatGPT)
+email=info@kaltluftseen.ch
+description=<p style="font-weight:normal">Berechnung von Horizontlinie, Sonnenbahnen &amp; Sky View Factor</p><p style="font-weight:normal">Voraussetzung: Digitales Höhenmodell im Schweizer Koordinatensystem LV95.</p><p style="font-weight:normal">Das Plugin rechnet nach Angabe eines Punktes (Koordinatenwerte E (Ost) bzw. N (Nord)) die Horizontlinie, den Sky View Factor (nach <a href="https://doi.org/10.1007/bf02243741">Marks &amp; Dozier (1979)</a>, zitiert in <a href="https://doi.org/10.1175/1520-0450(2004)043&lt;1224:MTDTRA&gt;2.0.CO;2">Whiteman et al. (2004)</a>) sowie die Sonnenbahnen (nach <a href="http://www.nrel.gov/docs/fy08osti/34302.pdf">Reda &amp; Andreas (2008)</a>) am 21. Tag jedes Monats.</p><p style="font-weight:normal">Symmetrische Sonnenbahnen werden nicht gezeichnet.<br>Resultate: Erzeugt CSV-Files und eine PNG-Graphik.</p>
