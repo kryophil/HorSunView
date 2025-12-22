@@ -132,7 +132,6 @@ class HorizonAnalysisTask(QgsTask):
     def compute_sun_paths(self):
         from datetime import datetime, timedelta
         import numpy as np, pandas as pd, os
-        from .spa_nrel import spa_calculate
         x0, y0 = self.coords
         crs_src = QgsCoordinateReferenceSystem('EPSG:2056')
         crs_dest = QgsCoordinateReferenceSystem('EPSG:4326')

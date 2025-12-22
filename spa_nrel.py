@@ -1,107 +1,135 @@
 # -*- coding: utf-8 -*-
-"""
-spa.py
+"""spa_nrel.py
 
-Eigenimplementierung des NREL Solar Position Algorithm (SPA) für präzise
-Berechnung von Azimut- und Elevationswinkel der Sonne.
-Referenz: "Solar Position Algorithm for Solar Radiation Applications",
-National Renewable Energy Laboratory (NREL), Technical Report, 2008.
+Compatibility wrapper around the strict NREL SPA port (spa_strict.py).
 
-Funktion: spa_calculate(dt, lat, lon, elev, return_lst=False)
-  dt:   datetime.datetime, UTC-annotiert oder naive (wird zu UTC interpretiert)
-  lat:  geografische Breite [°]
-  lon:  geografische Länge [° Ost positiv]
-  elev: Höhe über Meer [m]
-  return_lst: wenn True, zusätzlich die Local Solar Time [h] zurückgeben
-Rückgabe:
-  (azimuth_deg, elevation_deg) oder
-  (azimuth_deg, elevation_deg, lst_hours)
+This keeps the previously-used plugin API:
+
+    az_deg, el_deg = spa_calculate(dt_utc, lat, lon, elevation_m, ...)
+    az_deg, el_deg, lst_hours = spa_calculate(..., return_lst=True)
+
+Where:
+- dt_utc is a datetime (naive interpreted as UTC, or timezone-aware).
+- azimuth is degrees from North, clockwise (0..360).
+- elevation is degrees above horizon.
+
+Internally, it calls spa_strict.spa_calculate() with SPA_ZA and computes LST via the equation of time.
 """
+
+from __future__ import annotations
 
 from datetime import datetime, timezone
-import math
 from typing import Tuple, Union
 
+from .spa_strict import (
+    SpaData,
+    spa_calculate as _spa_calculate_struct,
+    SPA_ZA,
+    sun_mean_longitude,
+    eot as _eot_minutes,
+)
+
+
+def delta_t_estimate_seconds(year: int) -> float:
+    """Rough ΔT estimate in seconds for years near the present.
+
+    This replicates the previous lightweight approach. For exact replication against a reference run,
+    pass delta_t explicitly to spa_calculate().
+    """
+    # Simple piecewise approximation around early 2000s; adjust as needed or override.
+    # (Kept intentionally conservative; user workflows often pass ΔT explicitly.)
+    y = float(year)
+    if y < 2005:
+        return 64.7
+    if y < 2015:
+        return 67.0
+    if y < 2025:
+        return 69.0
+    return 71.0
+
+
 def spa_calculate(
-    dt: datetime,
+    dt_utc: datetime,
     lat: float,
     lon: float,
-    elev: float,
-    return_lst: bool = False
+    elevation_m: float,
+    pressure_mbar: float = 1013.25,
+    temperature_c: float = 15.0,
+    delta_t: float | None = None,
+    delta_ut1: float = 0.0,
+    atmos_refract_deg: float = 0.5667,
+    return_lst: bool = False,
 ) -> Union[Tuple[float, float], Tuple[float, float, float]]:
-    # 1. Julian Day
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    jd = (dt - datetime(2000, 1, 1, 12, tzinfo=timezone.utc)).total_seconds() / 86400.0 + 2451545.0
+    """Compute sun azimuth/elevation using NREL SPA (strict port).
 
-    # 2. Julian Century
-    jc = (jd - 2451545.0) / 36525.0
+    Parameters
+    ----------
+    dt_utc : datetime
+        UTC timestamp. If naive, interpreted as UTC.
+    lat, lon : float
+        Degrees (WGS84): latitude [-90..90], longitude [-180..180].
+    elevation_m : float
+        Observer elevation above sea level [m].
+    pressure_mbar : float
+        Local atmospheric pressure [mbar].
+    temperature_c : float
+        Local temperature [°C].
+    delta_t : float | None
+        ΔT = TT - UT1 [s]. If None, a simple estimate is used.
+    delta_ut1 : float
+        UT1 - UTC [s]. If unknown, 0 is acceptable for most plotting use.
+    atmos_refract_deg : float
+        Atmospheric refraction at sunrise/sunset [deg]. Default matches NREL sample (0.5667°).
+    return_lst : bool
+        If True, also return local solar time (apparent) in hours [0..24).
 
-    # 3. Geometrische mittlere Sonnenlänge (deg)
-    gml = (280.46646 + jc*(36000.76983 + jc*0.0003032)) % 360
+    Returns
+    -------
+    (azimuth_deg, elevation_deg) or (azimuth_deg, elevation_deg, lst_hours)
+    """
+    if dt_utc.tzinfo is None:
+        dt_utc = dt_utc.replace(tzinfo=timezone.utc)
+    else:
+        dt_utc = dt_utc.astimezone(timezone.utc)
 
-    # 4. Geometrische mittlere Sonnenanomalie (deg)
-    gma = 357.52911 + jc*(35999.05029 - 0.0001537*jc)
+    if delta_t is None:
+        delta_t = delta_t_estimate_seconds(dt_utc.year)
 
-    # 5. Exzentrizität der Erdumlaufbahn
-    ecc = 0.016708634 - jc*(0.000042037 + 0.0000001267*jc)
-
-    # 6. Zentrale Sonnengleichung (deg)
-    eq_time = (
-        gml
-        + (1.914602 - jc*(0.004817 + 0.000014*jc)) * math.sin(math.radians(gma))
-        + (0.019993 - 0.000101*jc) * math.sin(math.radians(2*gma))
-        + 0.000289 * math.sin(math.radians(3*gma))
-        - 0.0
+    spa = SpaData(
+        year=dt_utc.year,
+        month=dt_utc.month,
+        day=dt_utc.day,
+        hour=dt_utc.hour,
+        minute=dt_utc.minute,
+        second=dt_utc.second + dt_utc.microsecond / 1e6,
+        delta_ut1=float(delta_ut1),
+        delta_t=float(delta_t),
+        timezone=0.0,
+        longitude=float(lon),
+        latitude=float(lat),
+        elevation=float(elevation_m),
+        pressure=float(pressure_mbar),
+        temperature=float(temperature_c),
+        slope=0.0,
+        azm_rotation=0.0,
+        atmos_refract=float(atmos_refract_deg),
+        function=SPA_ZA,
     )
-    eq_time = eq_time - gml  # Entfernung des mittleren Sonnenlängenanteils
 
-    # 7. Zeitgleichungs-Korrektur (min)
-    et = 4 * eq_time  # in Minuten
+    rc = _spa_calculate_struct(spa)
+    if rc != 0:
+        raise ValueError(f"SPA input validation failed with code {rc}")
 
-    # 8. UT in Dezimalstunden
-    ut = dt.hour + dt.minute/60 + dt.second/3600
+    az = spa.azimuth
+    el = spa.e
 
-    # 9. Local Solar Time (h)
-    lst = (ut + et/60 + lon/15) % 24
+    if not return_lst:
+        return az, el
 
-    # 10. Stundenwinkel (deg)
-    sha = (lst - 12) * 15
-    sha_rad = math.radians(sha)
+    # Local solar time (apparent) in hours, using SPA equation of time definition.
+    ut_hours = dt_utc.hour + dt_utc.minute / 60.0 + (dt_utc.second + dt_utc.microsecond / 1e6) / 3600.0
+    m = sun_mean_longitude(spa.jme)
+    eot_minutes = _eot_minutes(m, spa.alpha, spa.del_psi, spa.epsilon)
+    lst = (ut_hours + eot_minutes / 60.0 + lon / 15.0) % 24.0
 
-    # 11. Sonneneklatation (delta, deg)
-    obliq = 23.43929111 - jc*(0.013004167 + 1.6666667e-7*jc - 5.0277778e-7*jc*jc)
-    delta = math.degrees(math.asin(
-        math.sin(math.radians(obliq)) * math.sin(math.radians(gma))
-    ))
-    delta_rad = math.radians(delta)
-
-    # 12. Zenith-Winkel & Elevation
-    lat_rad = math.radians(lat)
-    zenith = math.degrees(math.acos(
-        math.sin(lat_rad)*math.sin(delta_rad) +
-        math.cos(lat_rad)*math.cos(delta_rad)*math.cos(sha_rad)
-    ))
-    elev0 = 90 - zenith
-
-    # 13. Atmosphärische Refraktion (approx.)
-    if elev0 > 85:
-        refr = 0
-    else:
-        pressure = 1013.25  # mbar
-        temp = 15           # °C
-        te = math.tan(math.radians(elev0 + 10.3/(elev0+5.11)))
-        refr = (pressure/1010)*(283/(273+temp))*(1.02/60)/te
-
-    elevation = elev0 + refr
-
-    # 14. Azimut (deg von Nord im Uhrzeigersinn)
-    azimuth = math.degrees(math.atan2(
-        math.sin(sha_rad),
-        math.cos(sha_rad)*math.sin(lat_rad) - math.tan(delta_rad)*math.cos(lat_rad)
-    )) % 360
-
-    if return_lst:
-        return azimuth, elevation, lst
-    else:
-        return azimuth, elevation
+    return az, el, lst
