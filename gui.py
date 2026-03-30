@@ -70,6 +70,16 @@ class HorSunViewPlugin:
             )
             return
 
+        # Qt5/Qt6-Kompatibilität: Enums haben in Qt6 einen längeren Pfad
+        try:
+            _BTN_OK     = QDialogButtonBox.StandardButton.Ok
+            _BTN_CANCEL = QDialogButtonBox.StandardButton.Cancel
+            _ACCEPTED   = QDialog.DialogCode.Accepted
+        except AttributeError:
+            _BTN_OK     = QDialogButtonBox.Ok       # type: ignore[attr-defined]
+            _BTN_CANCEL = QDialogButtonBox.Cancel   # type: ignore[attr-defined]
+            _ACCEPTED   = QDialog.Accepted          # type: ignore[attr-defined]
+
         # ---- Dialog aufbauen ----
         dialog = QDialog(self.iface.mainWindow())
         dialog.setModal(True)
@@ -181,15 +191,15 @@ class HorSunViewPlugin:
         layout.addRow(hint)
 
         # OK / Cancel
-        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btn_box.button(QDialogButtonBox.Ok).setText(
+        btn_box = QDialogButtonBox(_BTN_OK | _BTN_CANCEL)
+        btn_box.button(_BTN_OK).setText(
             QCoreApplication.translate("HorSunView", "Berechnen")
         )
         btn_box.accepted.connect(dialog.accept)
         btn_box.rejected.connect(dialog.reject)
         layout.addRow(btn_box)
 
-        if dialog.exec_() != QDialog.Accepted:
+        if dialog.exec_() != _ACCEPTED:
             return
 
         # ---- Eingaben auslesen & validieren ----
