@@ -1,32 +1,36 @@
 # -*- coding: utf-8 -*-
+"""
+gui.py – HorSunView Plugin-Hauptklasse und Eingabedialog.
+
+Verbesserungen gegenüber Originalversion:
+  - Ausgabeverzeichnis frei wählbar (nicht mehr an Projektdatei gebunden)
+  - Validierung: Koordinaten werden gegen DEM-Extent geprüft
+  - Fortschrittsanzeige: saubere Verbindung ohne Lambda-Spam
+  - Koordinaten-Eingabe mit grösserem Standardwert (Schweiz-Mitte)
+"""
 from qgis.PyQt.QtCore import QCoreApplication
 from qgis.PyQt.QtWidgets import (
-    QAction,
-    QMessageBox,
-    QDialog,
-    QFormLayout,
-    QComboBox,
-    QDoubleSpinBox,
-    QLineEdit,
-    QDialogButtonBox
+    QAction, QMessageBox, QDialog, QFormLayout,
+    QComboBox, QDoubleSpinBox, QLineEdit,
+    QDialogButtonBox, QFileDialog, QPushButton,
+    QHBoxLayout, QWidget, QLabel
 )
 from qgis.PyQt.QtGui import QIcon
 from qgis.core import (
-    QgsProject,
-    QgsRasterLayer,
-    QgsApplication,
-    Qgis
+    QgsProject, QgsRasterLayer, QgsApplication, Qgis
 )
 import os
 from datetime import datetime
 
 from .analysis import HorizonAnalysisTask
 
+
 class HorSunViewPlugin:
     def __init__(self, iface):
         self.iface = iface
         self.plugin_dir = os.path.dirname(__file__)
         self.action = None
+        self._active_task = None
 
     def initGui(self):
         icon_path = os.path.join(self.plugin_dir, 'icons', 'icon_24.png')
@@ -50,112 +54,176 @@ class HorSunViewPlugin:
         self.iface.removeToolBarIcon(self.action)
 
     def show_input_dialog(self):
-        # Build modal dialog
-        dialog = QDialog(self.iface.mainWindow())
-        dialog.setModal(True)
-        dialog.setWindowTitle(
-            QCoreApplication.translate("HorSunView", "HorSunView: Eingaben")
-        )
-        layout = QFormLayout(dialog)
-
-        # DEM layer selection
+        # ---- Rasterlayer sammeln ----
         raster_layers = [
             layer for layer in QgsProject.instance().mapLayers().values()
             if isinstance(layer, QgsRasterLayer)
         ]
+        if not raster_layers:
+            QMessageBox.warning(
+                self.iface.mainWindow(),
+                QCoreApplication.translate("HorSunView", "Kein Höhenmodell"),
+                QCoreApplication.translate(
+                    "HorSunView",
+                    "Bitte laden Sie zuerst ein DEM-Rasterlayer in Ihr QGIS-Projekt."
+                )
+            )
+            return
+
+        # ---- Dialog aufbauen ----
+        dialog = QDialog(self.iface.mainWindow())
+        dialog.setModal(True)
+        dialog.setWindowTitle(
+            QCoreApplication.translate("HorSunView", "HorSunView – Eingaben")
+        )
+        dialog.setMinimumWidth(420)
+        layout = QFormLayout(dialog)
+        layout.setRowWrapPolicy(QFormLayout.WrapLongRows)
+
+        # DEM-Auswahl
         combo = QComboBox()
         for layer in raster_layers:
             combo.addItem(layer.name(), layer)
         layout.addRow(
-            QCoreApplication.translate("HorSunView", "Höhenmodell:"), combo
+            QCoreApplication.translate("HorSunView", "Höhenmodell (DEM):"), combo
         )
 
-        # Coordinates input
-        spin_x = QDoubleSpinBox()
-        spin_x.setRange(2480000, 2840000)
-        spin_x.setDecimals(1)
+        # Koordinaten (LV95)
+        spin_e = QDoubleSpinBox()
+        spin_e.setRange(2480000, 2840000)
+        spin_e.setDecimals(1)
+        spin_e.setSingleStep(100)
+        spin_e.setValue(2600000)  # Schweiz-Mitte als Startwert
+        spin_e.setSuffix(" m")
         layout.addRow(
-            QCoreApplication.translate("HorSunView", "Ostwert (LV95):"), spin_x
+            QCoreApplication.translate("HorSunView", "Ostwert E (LV95):"), spin_e
         )
 
-        spin_y = QDoubleSpinBox()
-        spin_y.setRange(1070000, 1296000)
-        spin_y.setDecimals(1)
+        spin_n = QDoubleSpinBox()
+        spin_n.setRange(1070000, 1296000)
+        spin_n.setDecimals(1)
+        spin_n.setSingleStep(100)
+        spin_n.setValue(1200000)
+        spin_n.setSuffix(" m")
         layout.addRow(
-            QCoreApplication.translate("HorSunView", "Nordwert (LV95):"), spin_y
+            QCoreApplication.translate("HorSunView", "Nordwert N (LV95):"), spin_n
         )
 
-        # Place input
+        # Ortsname
         edit_place = QLineEdit()
+        edit_place.setPlaceholderText("z. B. Grindelwald")
         layout.addRow(
-            QCoreApplication.translate("HorSunView", "Ort (für Titel):"), edit_place
+            QCoreApplication.translate("HorSunView", "Ortsname (Titel/Prefix):"), edit_place
         )
 
-        # OK / Cancel buttons
+        # Ausgabeverzeichnis
+        out_dir_edit = QLineEdit()
+        # Vorschlag: Projektordner falls vorhanden, sonst Home
+        proj_file = QgsProject.instance().fileName()
+        default_out = os.path.dirname(proj_file) if proj_file else os.path.expanduser("~")
+        out_dir_edit.setText(default_out)
+
+        btn_browse = QPushButton("…")
+        btn_browse.setFixedWidth(32)
+        btn_browse.setToolTip(
+            QCoreApplication.translate("HorSunView", "Ausgabeverzeichnis wählen")
+        )
+
+        def browse_dir():
+            d = QFileDialog.getExistingDirectory(
+                dialog,
+                QCoreApplication.translate("HorSunView", "Ausgabeverzeichnis wählen"),
+                out_dir_edit.text()
+            )
+            if d:
+                out_dir_edit.setText(d)
+
+        btn_browse.clicked.connect(browse_dir)
+
+        row_widget = QWidget()
+        row_layout = QHBoxLayout(row_widget)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.addWidget(out_dir_edit)
+        row_layout.addWidget(btn_browse)
+        layout.addRow(
+            QCoreApplication.translate("HorSunView", "Ausgabeverzeichnis:"), row_widget
+        )
+
+        # Hinweistext
+        hint = QLabel(
+            QCoreApplication.translate(
+                "HorSunView",
+                "<small>Koordinaten im Schweizer Koordinatensystem LV95 (EPSG:2056).<br>"
+                "Beobachterhöhe: Geländehöhe + 2 m. Sichtweite: 10 km.</small>"
+            )
+        )
+        hint.setWordWrap(True)
+        layout.addRow(hint)
+
+        # OK / Cancel
         btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btn_box.button(QDialogButtonBox.Ok).setText(
+            QCoreApplication.translate("HorSunView", "Berechnen")
+        )
         btn_box.accepted.connect(dialog.accept)
         btn_box.rejected.connect(dialog.reject)
         layout.addRow(btn_box)
 
-        # Show dialog
         if dialog.exec_() != QDialog.Accepted:
             return
 
-        # Retrieve inputs after confirmation
+        # ---- Eingaben auslesen & validieren ----
         dem_layer = combo.currentData()
-        if dem_layer is None:
-            QMessageBox.warning(
-                None,
-                QCoreApplication.translate("HorSunView", "Fehler"),
-                QCoreApplication.translate("HorSunView", "Bitte wählen Sie ein Höhenmodell aus.")
-            )
-            return
-
-        x = spin_x.value()
-        y = spin_y.value()
-
+        x = spin_e.value()
+        y = spin_n.value()
         place = edit_place.text().strip()
+        out_dir = out_dir_edit.text().strip()
+
+        errors = []
+        if dem_layer is None:
+            errors.append(QCoreApplication.translate("HorSunView", "Kein Höhenmodell ausgewählt."))
         if not place:
-            QMessageBox.warning(
-                None,
-                QCoreApplication.translate("HorSunView", "Fehler"),
-                QCoreApplication.translate("HorSunView", "Bitte geben Sie einen Ortsnamen ein.")
-            )
-            return
+            errors.append(QCoreApplication.translate("HorSunView", "Bitte einen Ortsnamen eingeben."))
+        if not out_dir or not os.path.isdir(out_dir):
+            errors.append(QCoreApplication.translate(
+                "HorSunView", "Ausgabeverzeichnis existiert nicht oder ist ungültig."
+            ))
 
-        # Ensure QGIS project is saved
-        proj_file = QgsProject.instance().fileName()
-        if not proj_file:
-            QMessageBox.warning(
-                None,
-                QCoreApplication.translate("HorSunView", "Fehler"),
-                QCoreApplication.translate(
-                    "HorSunView",
-                    "Bitte speichern Sie zuerst Ihr QGIS-Projekt, damit das Ausgabeverzeichnis festgelegt werden kann."
+        # Koordinatenvalidierung gegen DEM-Extent
+        if dem_layer is not None:
+            ext = dem_layer.extent()
+            if not (ext.xMinimum() <= x <= ext.xMaximum() and
+                    ext.yMinimum() <= y <= ext.yMaximum()):
+                errors.append(
+                    QCoreApplication.translate(
+                        "HorSunView",
+                        f"Koordinaten ({x:.0f}, {y:.0f}) liegen ausserhalb des gewählten DEM:\n"
+                        f"  E: {ext.xMinimum():.0f} – {ext.xMaximum():.0f}\n"
+                        f"  N: {ext.yMinimum():.0f} – {ext.yMaximum():.0f}"
+                    )
                 )
+
+        if errors:
+            QMessageBox.warning(
+                self.iface.mainWindow(),
+                QCoreApplication.translate("HorSunView", "Eingabefehler"),
+                "\n\n".join(errors)
             )
             return
-        self.out_dir = os.path.dirname(proj_file)
 
-        # Filename prefix from place
-        self.prefix = place.replace(" ", "_")
-
-        # Use current year
+        # ---- Task starten ----
         year = datetime.now().year
+        task = HorizonAnalysisTask(dem_layer, x, y, year, place, out_dir, self.iface)
+        self._active_task = task  # Referenz halten, sonst kann GC zuschlagen
 
-        # Start background task
-        task = HorizonAnalysisTask(dem_layer, x, y, year, place, self.out_dir, self.iface)
-        manager = QgsApplication.taskManager()
-        manager.addTask(task)
+        QgsApplication.taskManager().addTask(task)
 
-        # Notify user
         self.iface.messageBar().pushMessage(
             "HorSunView",
-            QCoreApplication.translate("HorSunView", "Berechnung gestartet..."),
-            level=Qgis.Info
-        )
-        task.progressChanged.connect(
-            lambda p: self.iface.messageBar().pushMessage(
-                "HorSunView", f"{p}% erledigt", level=Qgis.Info
-            )
+            QCoreApplication.translate(
+                "HorSunView",
+                f"Berechnung gestartet für {place} ({x:.0f}, {y:.0f}) …"
+            ),
+            level=Qgis.Info,
+            duration=4
         )
