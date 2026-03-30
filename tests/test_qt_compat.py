@@ -48,6 +48,11 @@ QT5_PATTERNS = [
         "Qt.Alignment-Enum ohne AlignmentFlag-Namespace",
         "Qt.AlignmentFlag.AlignLeft  (Qt6-Stil)",
     ),
+    (
+        r'\.\s*exec_\s*\(\)',
+        "exec_() in Qt6 nicht mehr vorhanden",
+        "getattr(obj, 'exec', obj.exec_)()  oder einfach obj.exec()",
+    ),
 ]
 
 
