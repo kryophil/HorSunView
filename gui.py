@@ -200,8 +200,8 @@ class HorSunViewPlugin:
         layout.addRow(btn_box)
 
         # Qt6: exec_() → exec()
-        _exec = getattr(dialog, 'exec', dialog.exec_)  # type: ignore[attr-defined]
-        if _exec() != _ACCEPTED:
+        result = dialog.exec() if hasattr(dialog, 'exec') else dialog.exec_()  # type: ignore[attr-defined]
+        if result != _ACCEPTED:
             return
 
         # ---- Eingaben auslesen & validieren ----
