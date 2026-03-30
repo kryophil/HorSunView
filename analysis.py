@@ -239,7 +239,7 @@ class HorizonAnalysisTask(QgsTask):
             (12, "21. Dez"),
             (1,  "21. Jan/Nov"),
             (2,  "21. Feb/Okt"),
-            (3,  "21. Mrz/Sep"),
+            (3,  "21. Mär/Sep"),
             (4,  "21. Apr/Aug"),
             (5,  "21. Mai/Jul"),
             (6,  "21. Jun"),
