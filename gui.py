@@ -78,7 +78,6 @@ class HorSunViewPlugin:
         )
         dialog.setMinimumWidth(420)
         layout = QFormLayout(dialog)
-        layout.setRowWrapPolicy(QFormLayout.WrapLongRows)
 
         # DEM-Auswahl
         combo = QComboBox()
