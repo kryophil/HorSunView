@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import numpy as np
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from .spa_nrel import spa_calculate
 from qgis.core import (
@@ -40,6 +40,8 @@ _DARKGREY  = '#444444'
 _MIDGREY   = '#888888'
 _LIGHTGREY = '#BBBBBB'
 _FILLGREY  = '#c0c0c0'
+_SUNPATH_C = '#606060'   # Monatskurven (hinter Horizont sichtbar)
+_HOUR_C    = '#909090'   # Stundenlinien (hinter Horizont sichtbar)
 
 _LW_HORIZON = 2.8    # Horizontlinie
 _LW_MONTH   = 1.1    # Monatskurven
@@ -173,14 +175,14 @@ class Plotter:
                 color=_LIGHTGREY, zorder=0
             )
 
-            # Horizont
+            # Horizont (zorder 3/4 → überdeckt Sonnenbahnen und Stundenlinien)
             ax.fill_between(
                 horizon_df['azimut'], horizon_df['horizontwinkel'],
-                y2=0, color=_FILLGREY, alpha=0.85, zorder=2
+                y2=0, color=_FILLGREY, alpha=0.85, zorder=3
             )
             ax.plot(
                 horizon_df['azimut'], horizon_df['horizontwinkel'],
-                color=_BLACK, linewidth=_LW_HORIZON, zorder=3
+                color=_BLACK, linewidth=_LW_HORIZON, zorder=4
             )
 
             # Stundenlinien (nur Linien, Labels später)
@@ -194,8 +196,8 @@ class Plotter:
                     continue
                 ax.plot(
                     df['azimut'], df['höhe'],
-                    linestyle='-', color=_BLACK,
-                    linewidth=_LW_MONTH, zorder=4
+                    linestyle='-', color=_SUNPATH_C,
+                    linewidth=_LW_MONTH, zorder=2
                 )
                 az_lbl, el_lbl = _label_pos_in_range(df)
                 if az_lbl is not None:
@@ -211,18 +213,21 @@ class Plotter:
             for az, el, lbl, df in month_label_data:
                 rot = _tangent_angle(ax, df, az)
                 ax.text(
-                    az, el + 1.5, lbl,
+                    az, el + 0.5, lbl,
                     rotation=rot, rotation_mode='anchor',
                     ha='center', va='bottom',
                     fontsize=_FS_MONTH, fontfamily=_FONT_DATA,
                     color=_BLACK, clip_on=True, zorder=6
                 )
 
-            # Stunden-Labels
+            # Stunden-Labels: untere Ecke der Textbox nahe Berührungspunkt mit Jun-Kurve
+            # az < 180° → untere rechte Ecke (ha='right')
+            # az ≥ 180° → untere linke Ecke (ha='left')
             for az, el, label in hour_label_data:
+                ha = 'right' if az < 180.0 else 'left'
                 ax.text(
-                    az, el + 0.8, label,
-                    ha='center', va='bottom',
+                    az, el + 1.2, label,
+                    ha=ha, va='bottom',
                     fontsize=_FS_HOUR, fontfamily=_FONT_DATA,
                     color=_MIDGREY, clip_on=True, zorder=6
                 )
@@ -232,11 +237,7 @@ class Plotter:
                 0.01, 0.99,
                 f"Sky View Factor: {svf:.2f}",
                 transform=ax.transAxes, ha='left', va='top',
-                fontsize=_FS_SVF, fontfamily=_FONT_AXES,
-                bbox=dict(
-                    boxstyle='round,pad=0.3',
-                    fc='white', ec=_LIGHTGREY, alpha=0.9
-                )
+                fontsize=_FS_SVF, fontfamily=_FONT_AXES
             )
 
             # Copyright
@@ -245,7 +246,7 @@ class Plotter:
                 '© Geodaten: swisstopo\nGraphik: kaltluftseen.ch',
                 transform=ax.transAxes, ha='right', va='bottom',
                 fontsize=_FS_COPY, fontfamily=_FONT_AXES,
-                color=_MIDGREY, linespacing=1.5
+                color=_BLACK, linespacing=1.5
             )
 
             # ── Phase 4: Speichern ────────────────────────────────────────────
@@ -266,8 +267,9 @@ class Plotter:
 
     def _draw_hour_lines(self, ax, horizon_df, coords, year):
         """
-        Zeichnet UTC-Stundenlinien (gestrichelt, hellgrau).
-        Gibt Liste von (az, el, label_text) für Phase 3 zurück.
+        Zeichnet UTC-Stundenlinien (~365 Punkte pro Linie, NaN für unsichtbare Tage).
+        Label-Ankerpunkt = Berührungspunkt der Linie mit der Jun-21-Sonnenbahn.
+        Gibt Liste von (az_touch, el_touch, label_text) für Phase 3 zurück.
         """
         x0, y0 = coords
         z0 = horizon_df['hoehe_standort'].iloc[0]
@@ -278,36 +280,48 @@ class Plotter:
         pt = transformer.transform(x0, y0)
         lon, lat = pt.x(), pt.y()
 
-        ref_months = [1, 2, 3, 4, 5, 6, 12]
         label_data = []
+        n_days = 365
 
         for utc_hour in range(0, 24):
-            azs, els = [], []
-            for m in ref_months:
-                dt_utc = datetime(year, m, 21, utc_hour, 0, tzinfo=timezone.utc)
+            azs = np.empty(n_days)
+            els = np.empty(n_days)
+
+            for day_num in range(n_days):
+                dt_utc = (
+                    datetime(year, 1, 1, utc_hour, 0, tzinfo=timezone.utc)
+                    + timedelta(days=day_num)
+                )
                 az, el = spa_calculate(dt_utc, lat, lon, z0)
-                azs.append(az)
-                els.append(el)
+                azs[day_num] = az
+                els[day_num] = el
 
-            azs = np.array(azs)
-            els = np.array(els)
             mask = els >= 0
-
             if not mask.any():
                 continue
 
+            # NaN für unsichtbare Tage → saubere Lücken statt Verbindungslinien
+            azs_plot = azs.copy()
+            els_plot = els.copy()
+            azs_plot[~mask] = np.nan
+            els_plot[~mask] = np.nan
+
             ax.plot(
-                azs[mask], els[mask],
-                linestyle='--', color=_LIGHTGREY,
+                azs_plot, els_plot,
+                linestyle='--', color=_HOUR_C,
                 linewidth=_LW_HOUR, zorder=1
             )
 
-            # Position für Label: höchster sichtbarer Punkt
-            idx = int(np.argmax(els[mask]))
-            label_data.append((
-                float(azs[mask][idx]),
-                float(els[mask][idx]),
-                f"{utc_hour:02d} UTC"
-            ))
+            # Berührungspunkt mit 21. Juni (höchste Sonnenbahn)
+            dt_june21 = datetime(year, 6, 21, utc_hour, 0, tzinfo=timezone.utc)
+            az_touch, el_touch = spa_calculate(dt_june21, lat, lon, z0)
+
+            if el_touch < 0:
+                # Fallback: Punkt mit höchster Elevation auf der sichtbaren Linie
+                idx = int(np.argmax(np.where(mask, els, -np.inf)))
+                az_touch = float(azs[idx])
+                el_touch = float(els[idx])
+
+            label_data.append((float(az_touch), float(el_touch), f"{utc_hour:02d} UTC"))
 
         return label_data
