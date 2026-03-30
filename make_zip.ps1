@@ -17,6 +17,27 @@ $PluginName   = "HorSunView"
 $ScriptDir    = Split-Path -Parent $MyInvocation.MyCommand.Path
 $MetadataPath = Join-Path $ScriptDir "metadata.txt"
 
+# ── 0. Tests ausführen (blockiert bei Fehler) ────────────────────────────────
+Write-Host ""
+Write-Host "  Tests ausfuehren ..." -ForegroundColor Cyan
+$python = (Get-Command python -ErrorAction SilentlyContinue) ??
+          (Get-Command python3 -ErrorAction SilentlyContinue)
+if ($null -eq $python) {
+    Write-Host "  WARNUNG: Python nicht gefunden – Tests uebersprungen." -ForegroundColor Yellow
+} else {
+    Push-Location $ScriptDir
+    & $python.Source tests/run_all_tests.py
+    $testExit = $LASTEXITCODE
+    Pop-Location
+    if ($testExit -ne 0) {
+        Write-Host ""
+        Write-Host "  FEHLER: Tests fehlgeschlagen – ZIP wird nicht erstellt." -ForegroundColor Red
+        Write-Host "  Bitte Fehler beheben und erneut ausfuehren."
+        exit 1
+    }
+    Write-Host "  Tests: OK" -ForegroundColor Green
+}
+
 # ── 1. Version lesen ─────────────────────────────────────────────────────────
 $Metadata = Get-Content $MetadataPath -Encoding UTF8
 $VersionLine = $Metadata | Where-Object { $_ -match "^version=" }

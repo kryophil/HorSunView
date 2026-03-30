@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# .githooks/pre-commit
+# Wird vor jedem "git commit" ausgeführt.
+# Exit 1 blockiert den Commit; Exit 0 lässt ihn durch.
+#
+# Installation (einmalig, lokal):
+#   bash install_hooks.ps1  (Windows/PowerShell)
+#   bash install_hooks.sh   (Linux/macOS/Git Bash)
+# Oder manuell:
+#   git config core.hooksPath .githooks
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT" || exit 1
+
+echo "→ Tests werden ausgeführt ..."
+
+python tests/run_all_tests.py
+EXIT=$?
+
+if [ $EXIT -ne 0 ]; then
+    echo ""
+    echo "✗ Tests fehlgeschlagen – Commit abgebrochen."
+    echo "  Bitte Fehler beheben und erneut committen."
+    exit 1
+fi
+
+echo "✓ Alle Tests grün – Commit wird fortgesetzt."
+exit 0
