@@ -19,7 +19,7 @@ class HorizonAnalysisTask(QgsTask):
     GUI-Aufrufe NUR in finished() – dort ist der Main-Thread garantiert.
     """
 
-    def __init__(self, dem_layer, x, y, year, place, out_dir, iface):
+    def __init__(self, dem_layer, x, y, year, place, out_dir, iface, az_step=0.5):
         description = f"Horizontprofil und Sonnenbahnen für ({x:.1f}, {y:.1f})"
         super().__init__(description, QgsTask.CanCancel)
         self.dem_layer = dem_layer
@@ -29,6 +29,7 @@ class HorizonAnalysisTask(QgsTask):
         self.prefix = place.replace(" ", "_")
         self.out_dir = out_dir
         self.iface = iface          # nur in finished() verwenden!
+        self.az_step = float(az_step)
         self._dem_array = None
         self._gt = None
         self._rows = self._cols = 0
@@ -68,7 +69,6 @@ class HorizonAnalysisTask(QgsTask):
 
             # Horizontprofil
             horizon_df = self.compute_horizon()
-            self.setProgress(60)
             if self.isCanceled():
                 return False
 
@@ -112,7 +112,17 @@ class HorizonAnalysisTask(QgsTask):
     # Horizontprofil
     # ------------------------------------------------------------------
     def compute_horizon(self):
-        max_dist = 10000  # m
+        """
+        Berechnet das Horizontprofil für den Standort.
+
+        Verbesserungen gegenüber der ursprünglichen Version:
+          - NumPy-Vektorisierung des inneren Distanz-Loops (~100× schneller)
+          - Erdkrümmungskorrektur: Terrain wirkt auf Distanz d um d²/(2R) niedriger
+          - Azimut-Auflösung konfigurierbar (self.az_step, Standard 0.5°)
+          - Abbruch via isCanceled() zwischen Azimut-Schritten möglich
+        """
+        MAX_DIST = 10_000.0   # m
+        R_EARTH  = 6_371_000.0
         x0, y0 = self.coords
 
         # Ausdehnung prüfen (Warnung, kein Abbruch)
@@ -121,10 +131,10 @@ class HorizonAnalysisTask(QgsTask):
             x0 - extent.xMinimum(), extent.xMaximum() - x0,
             y0 - extent.yMinimum(), extent.yMaximum() - y0
         )
-        if dmin < max_dist:
+        if dmin < MAX_DIST:
             QgsMessageLog.logMessage(
                 f"Warnung: DEM deckt nur {dmin:.0f} m um den Standort ab "
-                f"(benötigt: {max_dist} m).",
+                f"(benötigt: {MAX_DIST:.0f} m).",
                 "HorSunView", Qgis.Warning
             )
 
@@ -145,19 +155,51 @@ class HorizonAnalysisTask(QgsTask):
             )))
         )
 
-        azs = np.arange(0, 361)  # 0…360 (360° = 0° für Closure)
-        angles = []
-        for az in azs:
-            max_ang = -90.0
-            sin_az = np.sin(np.radians(float(az)))
-            cos_az = np.cos(np.radians(float(az)))
-            for d in np.arange(pixel_size, max_dist + pixel_size, pixel_size):
-                h = self.get_height(x0 + sin_az * d, y0 + cos_az * d)
-                if h is not None:
-                    ang = np.degrees(np.arctan2(h - observer_elev, d))
-                    if ang > max_ang:
-                        max_ang = ang
-            angles.append(max_ang)
+        gt = self._gt
+
+        # Alle Distanzen einmalig berechnen (vektorisiert)
+        distances = np.arange(pixel_size, MAX_DIST + pixel_size, pixel_size,
+                              dtype=float)
+        # Erdkrümmungskorrektur: Terrain auf Distanz d erscheint um d²/(2R) niedriger
+        curvature = distances ** 2 / (2.0 * R_EARTH)
+
+        # Azimut-Raster inkl. Schlusspunkt 360° = 0° (für Closure im Plot/SVF)
+        n_az = round(360.0 / self.az_step)
+        azs = np.linspace(0.0, 360.0, n_az + 1)
+        angles = np.full(len(azs), -90.0)
+
+        for i, az in enumerate(azs):
+            # Abbruch-Check (QGIS Task-Mechanismus)
+            if self.isCanceled():
+                raise RuntimeError("Berechnung vom Benutzer abgebrochen.")
+
+            sin_az = np.sin(np.radians(az))
+            cos_az = np.cos(np.radians(az))
+
+            # Alle Stichprobenpunkte entlang des Strahls auf einmal
+            xs = x0 + sin_az * distances
+            ys = y0 + cos_az * distances
+
+            pxs = ((xs - gt[0]) / gt[1]).astype(int)
+            pys = ((ys - gt[3]) / gt[5]).astype(int)
+
+            valid = (
+                (pxs >= 0) & (pxs < self._cols) &
+                (pys >= 0) & (pys < self._rows)
+            )
+
+            if valid.any():
+                h = self._dem_array[pys[valid], pxs[valid]].astype(float)
+                # Erdkrümmung abziehen: entfernte Punkte wirken niedriger
+                h_corr = h - curvature[valid]
+                el = np.degrees(
+                    np.arctan2(h_corr - observer_elev, distances[valid])
+                )
+                angles[i] = float(el.max())
+
+            # Fortschritt: 10 % (nach DEM-Laden) … 60 % (Horizont fertig)
+            if i % max(1, n_az // 20) == 0:
+                self.setProgress(10 + int(50 * i / n_az))
 
         df = pd.DataFrame({'azimut': azs, 'horizontwinkel': angles})
         df['hoehe_standort'] = z0

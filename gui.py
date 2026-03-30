@@ -116,6 +116,26 @@ class HorSunViewPlugin:
             QCoreApplication.translate("HorSunView", "Ortsname (Titel/Prefix):"), edit_place
         )
 
+        # Azimut-Auflösung
+        spin_az = QDoubleSpinBox()
+        spin_az.setRange(0.1, 2.0)
+        spin_az.setSingleStep(0.1)
+        spin_az.setDecimals(1)
+        spin_az.setValue(0.5)
+        spin_az.setSuffix(" °")
+        spin_az.setToolTip(
+            QCoreApplication.translate(
+                "HorSunView",
+                "Winkelauflösung des Horizontprofils.\n"
+                "0.5° = Standardwert (guter Kompromiss Genauigkeit/Geschwindigkeit)\n"
+                "0.25° = höhere Auflösung (2× langsamer)\n"
+                "1.0° = schnell, ausreichend für grobe SVF-Schätzung"
+            )
+        )
+        layout.addRow(
+            QCoreApplication.translate("HorSunView", "Azimut-Auflösung:"), spin_az
+        )
+
         # Ausgabeverzeichnis
         out_dir_edit = QLineEdit()
         # Vorschlag: Projektordner falls vorhanden, sonst Home
@@ -154,7 +174,8 @@ class HorSunViewPlugin:
             QCoreApplication.translate(
                 "HorSunView",
                 "<small>Koordinaten im Schweizer Koordinatensystem LV95 (EPSG:2056).<br>"
-                "Beobachterhöhe: Geländehöhe + 2 m. Sichtweite: 10 km.</small>"
+                "Beobachterhöhe: Geländehöhe + 2 m. Sichtweite: 10 km.<br>"
+                "Erdkrümmungskorrektur ist aktiv.</small>"
             )
         )
         hint.setWordWrap(True)
@@ -178,6 +199,7 @@ class HorSunViewPlugin:
         y = spin_n.value()
         place = edit_place.text().strip()
         out_dir = out_dir_edit.text().strip()
+        az_step = spin_az.value()
 
         errors = []
         if dem_layer is None:
@@ -213,7 +235,8 @@ class HorSunViewPlugin:
 
         # ---- Task starten ----
         year = datetime.now().year
-        task = HorizonAnalysisTask(dem_layer, x, y, year, place, out_dir, self.iface)
+        task = HorizonAnalysisTask(dem_layer, x, y, year, place, out_dir, self.iface,
+                                   az_step=az_step)
         self._active_task = task  # Referenz halten, sonst kann GC zuschlagen
 
         QgsApplication.taskManager().addTask(task)
