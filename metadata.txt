@@ -1,6 +1,6 @@
 [general]
 name=HorSunView
-version=2.0.9
+version=2.0.10
 qgisMinimumVersion=3.10
 qgisMaximumVersion=4.99
 category=Raster
