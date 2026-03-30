@@ -99,14 +99,23 @@ if (-not $NoBump) {
 
     Push-Location $ScriptDir
     try {
-        git add metadata.txt | Out-Null
-        git commit -m "chore: version $CurrentVersion -> $NewVersion" | Out-Null
-        git push | Out-Null
+        git add metadata.txt 2>&1 | Out-Null
+        git commit -m "chore: version $CurrentVersion -> $NewVersion" 2>&1 | Out-Null
+        # Erst pullen (rebase), dann pushen – verhindert Konflikte
+        $pullResult = git pull --rebase 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "git pull fehlgeschlagen: $pullResult"
+        }
+        $pushResult = git push 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "git push fehlgeschlagen: $pushResult"
+        }
         Write-Host "  Git: OK (Version $NewVersion auf GitHub)" -ForegroundColor Green
     } catch {
-        Write-Host "  Git: Fehler beim Commit/Push – bitte manuell ausfuehren." -ForegroundColor Red
+        Write-Host "  Git: Fehler – bitte manuell ausfuehren:" -ForegroundColor Red
         Write-Host "       git add metadata.txt"
         Write-Host "       git commit -m `"chore: version $NewVersion`""
+        Write-Host "       git pull --rebase"
         Write-Host "       git push"
     }
     Pop-Location
