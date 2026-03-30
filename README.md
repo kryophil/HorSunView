@@ -61,12 +61,11 @@ Im Ordner der QGIS-Projektdatei werden u. a. erzeugt:
 
 ## Bekannte Punkte / ToDo
 
-Diese Liste ist als Arbeitsliste gedacht (Ist-Analyse, Stand heute):
-
-- Stundenlinien-Label im Plot: Variable `solar_time` ist derzeit nicht gesetzt → Plot-Fehler möglich.
-- Dezemberkurve wird im Plot mehrfach gezeichnet (Logikfehler).
-- Sonnenstandsberechnung basiert auf einer Eigenimplementierung („spa_nrel.py“) und muss gegen eine Referenz (NOAA/pvlib/SPA-Portierung) validiert werden. 
-- In `analysis.py` existieren zwei `get_height()`-Definitionen (eine überschreibt die andere) → Cleanup. 
+- ✅ Stundenlinien-Label: `solar_time` → `lst` (NameError behoben)
+- ✅ Dezemberkurve wurde im Plot mehrfach gezeichnet (Logikfehler behoben)
+- ✅ Zwei `get_height()`-Definitionen in `analysis.py` → bereinigt, nur GDAL-Version vorhanden
+- ✅ Stundenlinien zeigen Wahre Ortszeit (LST) korrekt via Gleichung der Zeit
+- ✅ SPA-Implementierung gegen NREL-Referenzfall validiert (siehe `tests/run_spa_tests.py`)
 
 ## Lizenz
 
